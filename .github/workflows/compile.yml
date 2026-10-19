@@ -1,0 +1,58 @@
+name: Compile
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  ROUNDHOUSE_VERSION: v2026.9.18
+  SPINEL_VERSION: 2026.09.12
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libsqlite3-dev libjemalloc-dev
+
+      - name: Install roundhouse
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sL -o /tmp/roundhouse.tar.xz "https://github.com/rubys/roundhouse/releases/download/${ROUNDHOUSE_VERSION}/roundhouse-x86_64-unknown-linux-musl.tar.xz"
+          tar -xJf /tmp/roundhouse.tar.xz -C /tmp
+          cp /tmp/roundhouse-*/roundhouse "$HOME/.local/bin/roundhouse"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          roundhouse --version
+
+      - name: Cache spinel build
+        uses: actions/cache@v4
+        with:
+          path: ~/spinel-src
+          key: spinel-build-${{ env.SPINEL_VERSION }}-${{ runner.os }}
+
+      - name: Build and install spinel
+        run: |
+          if [ ! -d "$HOME/spinel-src" ]; then
+            mkdir -p "$HOME/spinel-src"
+            curl -sL -o /tmp/spinel.tar.xz "https://github.com/matz/spinel/releases/download/${SPINEL_VERSION}/spinel-${SPINEL_VERSION}.tar.xz"
+            tar -xJf /tmp/spinel.tar.xz -C "$HOME/spinel-src" --strip-components=1
+          fi
+          make -C "$HOME/spinel-src" deps
+          make -C "$HOME/spinel-src" -j"$(nproc)"
+          sudo make -C "$HOME/spinel-src" install
+          spinel --version
+
+      - name: Compile app to native binary
+        run: bin/rails compile
